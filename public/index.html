@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>人事図書館 メンバー推移ダッシュボード</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #273449;
+    --border: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #60a5fa;
+    --full: #3b82f6;
+    --online: #ef4444;
+    --corp: #f59e0b;
+    --total: #e2e8f0;
+    --good: #22c55e;
+    --warn: #f97316;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Noto Sans JP", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 24px 32px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  h1 { font-size: 20px; font-weight: 700; margin: 0; }
+  .meta { font-size: 12px; color: var(--muted); }
+  .toggle {
+    display: inline-flex;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 3px;
+  }
+  .toggle button {
+    all: unset;
+    padding: 8px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 7px;
+    color: var(--muted);
+    transition: background .15s, color .15s;
+  }
+  .toggle button.active { background: var(--accent); color: #0f172a; font-weight: 700; }
+  main { padding: 24px 32px 48px; max-width: 1600px; margin: 0 auto; }
+
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+  }
+  .kpi .label { font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+  .kpi .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+  .kpi .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .kpi .delta-up { color: var(--good); }
+  .kpi .delta-down { color: var(--warn); }
+
+  .charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 1100px) { .charts { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .card h2 {
+    font-size: 14px;
+    margin: 0 0 12px;
+    font-weight: 600;
+    color: var(--text);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .card h2 .hint { font-size: 11px; color: var(--muted); font-weight: 400; }
+  .chart-wrap { position: relative; height: 320px; }
+
+  table.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 24px;
+  }
+  table.table th, table.table td {
+    border-bottom: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: right;
+  }
+  table.table th:first-child, table.table td:first-child { text-align: left; color: var(--muted); }
+  table.table thead th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 500; }
+  .table-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; overflow-x: auto; max-height: 380px; overflow-y: auto; }
+  .table-wrap h2 { font-size: 14px; margin: 0 0 12px; font-weight: 600; }
+  .pct-bad { color: #fca5a5; }
+  .pct-ok { color: #86efac; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>人事図書館 メンバー推移ダッシュボード</h1>
+    <div class="meta" id="meta">—</div>
+  </div>
+  <div class="toggle" role="tablist">
+    <button id="btn-weekly" class="active" type="button">週次</button>
+    <button id="btn-monthly" type="button">月次</button>
+  </div>
+</header>
+
+<main>
+  <section class="kpis" id="kpis"></section>
+
+  <section class="charts">
+    <div class="card">
+      <h2>アクティブメンバー数推移 <span class="hint">フル + オンライン + 法人一括</span></h2>
+      <div class="chart-wrap"><canvas id="chart-active"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>退会率 (%) <span class="hint">当期退会 ÷ 期首アクティブ</span></h2>
+      <div class="chart-wrap"><canvas id="chart-churn"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>入会者数 <span class="hint">種別内訳</span></h2>
+      <div class="chart-wrap"><canvas id="chart-new"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>退会者数 <span class="hint">種別内訳</span></h2>
+      <div class="chart-wrap"><canvas id="chart-leave"></canvas></div>
+    </div>
+  </section>
+
+  <section class="table-wrap" style="margin-top: 24px;">
+    <h2>明細(直近10期)</h2>
+    <table class="table" id="detail-table"></table>
+  </section>
+</main>
+
+<script>
+const COLORS = {
+  full:   '#3b82f6',
+  online: '#ef4444',
+  corp:   '#f59e0b',
+  total:  '#e2e8f0',
+};
+const LABELS = { full: 'フル', online: 'オンライン', corp: '法人一括', total: '合計' };
+
+let DATA = null;
+let currentPeriodicity = 'weekly';
+const charts = {};
+
+function fmtDate(iso, periodicity) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  if (periodicity === 'monthly') return `${y}/${m}`;
+  return `${y}/${m}/${day}`;
+}
+
+function churnRateSeries(leave, activePrev) {
+  // leave[i] / active[i-1]; first element null
+  const out = [];
+  for (let i = 0; i < leave.length; i++) {
+    if (i === 0 || leave[i] == null || activePrev[i - 1] == null || activePrev[i - 1] === 0) {
+      out.push(null);
+    } else {
+      out.push((leave[i] / activePrev[i - 1]) * 100);
+    }
+  }
+  return out;
+}
+
+function sumArr(...arrs) {
+  const n = arrs[0].length;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    let anyNonNull = false;
+    for (const a of arrs) {
+      if (a[i] != null) { s += a[i]; anyNonNull = true; }
+    }
+    out.push(anyNonNull ? s : null);
+  }
+  return out;
+}
+
+function destroyCharts() {
+  for (const k of Object.keys(charts)) {
+    if (charts[k]) { charts[k].destroy(); delete charts[k]; }
+  }
+}
+
+function renderKPIs(d, periodicity) {
+  const n = d.dates.length;
+  const i = n - 1;
+  const iPrev = n - 2;
+
+  const newTotal = (d.new_full[i] ?? 0) + (d.new_online[i] ?? 0) + (d.new_corp[i] ?? 0);
+  const leaveTotal = (d.leave_full[i] ?? 0) + (d.leave_online[i] ?? 0) + (d.leave_corp[i] ?? 0);
+  const activeTotal = (d.active_full[i] ?? 0) + (d.active_online[i] ?? 0) + (d.active_corp[i] ?? 0);
+  const activePrev = (d.active_full[iPrev] ?? 0) + (d.active_online[iPrev] ?? 0) + (d.active_corp[iPrev] ?? 0);
+  const churn = activePrev > 0 ? (leaveTotal / activePrev) * 100 : null;
+  const activeDelta = activeTotal - activePrev;
+  const periodLabel = periodicity === 'weekly' ? '当週' : '当月';
+  const endLabel = fmtDate(d.dates[i], periodicity);
+
+  const items = [
+    { label: `${endLabel} アクティブ合計`, value: activeTotal.toLocaleString(), sub: `前${periodicity === 'weekly' ? '週' : '月'}比 ${activeDelta >= 0 ? '+' : ''}${activeDelta}`, deltaClass: activeDelta >= 0 ? 'delta-up' : 'delta-down' },
+    { label: `${periodLabel} 入会数`, value: newTotal.toLocaleString(), sub: `フル ${d.new_full[i] ?? 0} / オンライン ${d.new_online[i] ?? 0} / 法人 ${d.new_corp[i] ?? 0}` },
+    { label: `${periodLabel} 退会数`, value: leaveTotal.toLocaleString(), sub: `フル ${d.leave_full[i] ?? 0} / オンライン ${d.leave_online[i] ?? 0} / 法人 ${d.leave_corp[i] ?? 0}` },
+    { label: `${periodLabel} 退会率`, value: churn == null ? '—' : churn.toFixed(2) + '%', sub: `期首アクティブ ${activePrev.toLocaleString()}` },
+  ];
+
+  document.getElementById('kpis').innerHTML = items.map(it => `
+    <div class="kpi">
+      <div class="label">${it.label}</div>
+      <div class="value">${it.value}</div>
+      <div class="sub ${it.deltaClass || ''}">${it.sub}</div>
+    </div>
+  `).join('');
+}
+
+function drawActive(d, labels) {
+  const ctx = document.getElementById('chart-active');
+  charts.active = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: LABELS.full,   data: d.active_full,   backgroundColor: COLORS.full,   stack: 'a' },
+        { label: LABELS.online, data: d.active_online, backgroundColor: COLORS.online, stack: 'a' },
+        { label: LABELS.corp,   data: d.active_corp,   backgroundColor: COLORS.corp,   stack: 'a' },
+      ],
+    },
+    options: baseOpts({ stacked: true, yTitle: '人数' }),
+  });
+}
+
+function drawChurn(d, labels) {
+  const activeTotal = sumArr(d.active_full, d.active_online, d.active_corp);
+  const churnFull   = churnRateSeries(d.leave_full,   d.active_full);
+  const churnOnline = churnRateSeries(d.leave_online, d.active_online);
+  const churnCorp   = churnRateSeries(d.leave_corp,   d.active_corp);
+  const leaveTotal  = sumArr(d.leave_full, d.leave_online, d.leave_corp);
+  const churnTotal  = churnRateSeries(leaveTotal, activeTotal);
+
+  const ctx = document.getElementById('chart-churn');
+  charts.churn = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: LABELS.total,  data: churnTotal,  borderColor: COLORS.total,  backgroundColor: COLORS.total,  borderWidth: 2.5, tension: .25, pointRadius: 2 },
+        { label: LABELS.full,   data: churnFull,   borderColor: COLORS.full,   backgroundColor: COLORS.full,   borderWidth: 1.5, tension: .25, pointRadius: 2 },
+        { label: LABELS.online, data: churnOnline, borderColor: COLORS.online, backgroundColor: COLORS.online, borderWidth: 1.5, tension: .25, pointRadius: 2 },
+        { label: LABELS.corp,   data: churnCorp,   borderColor: COLORS.corp,   backgroundColor: COLORS.corp,   borderWidth: 1.5, tension: .25, pointRadius: 2 },
+      ],
+    },
+    options: baseOpts({
+      yTitle: '%',
+      yTickCallback: v => v.toFixed(1) + '%',
+      tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y == null ? '—' : ctx.parsed.y.toFixed(2) + '%'}`,
+    }),
+  });
+}
+
+function drawNew(d, labels) {
+  const ctx = document.getElementById('chart-new');
+  charts.newc = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: LABELS.full,   data: d.new_full,   backgroundColor: COLORS.full,   stack: 'a' },
+        { label: LABELS.online, data: d.new_online, backgroundColor: COLORS.online, stack: 'a' },
+        { label: LABELS.corp,   data: d.new_corp,   backgroundColor: COLORS.corp,   stack: 'a' },
+      ],
+    },
+    options: baseOpts({ stacked: true, yTitle: '人数' }),
+  });
+}
+
+function drawLeave(d, labels) {
+  const ctx = document.getElementById('chart-leave');
+  charts.leave = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: LABELS.full,   data: d.leave_full,   backgroundColor: COLORS.full,   stack: 'a' },
+        { label: LABELS.online, data: d.leave_online, backgroundColor: COLORS.online, stack: 'a' },
+        { label: LABELS.corp,   data: d.leave_corp,   backgroundColor: COLORS.corp,   stack: 'a' },
+      ],
+    },
+    options: baseOpts({ stacked: true, yTitle: '人数' }),
+  });
+}
+
+function baseOpts({ stacked = false, yTitle = '', yTickCallback, tooltipCallback } = {}) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { labels: { color: '#cbd5e1', boxWidth: 14, font: { size: 11 } } },
+      tooltip: {
+        callbacks: tooltipCallback ? { label: tooltipCallback } : undefined,
+      },
+    },
+    scales: {
+      x: {
+        stacked,
+        ticks: { color: '#94a3b8', maxRotation: 0, autoSkip: true, autoSkipPadding: 10, font: { size: 10 } },
+        grid: { color: 'rgba(148,163,184,.08)' },
+      },
+      y: {
+        stacked,
+        beginAtZero: true,
+        title: yTitle ? { display: true, text: yTitle, color: '#94a3b8', font: { size: 11 } } : undefined,
+        ticks: {
+          color: '#94a3b8',
+          callback: yTickCallback,
+          font: { size: 11 },
+        },
+        grid: { color: 'rgba(148,163,184,.08)' },
+      },
+    },
+  };
+}
+
+function renderDetailTable(d, periodicity) {
+  const n = d.dates.length;
+  const start = Math.max(0, n - 10);
+
+  const head = `
+    <thead>
+      <tr>
+        <th>${periodicity === 'weekly' ? '週' : '月'}</th>
+        <th>入会合計</th><th>入会 フル</th><th>入会 オンライン</th><th>入会 法人</th>
+        <th>退会合計</th><th>退会 フル</th><th>退会 オンライン</th><th>退会 法人</th>
+        <th>退会率 合計</th><th>退会率 フル</th><th>退会率 オンライン</th><th>退会率 法人</th>
+        <th>アクティブ</th>
+      </tr>
+    </thead>`;
+
+  const activeTotal = sumArr(d.active_full, d.active_online, d.active_corp);
+  const cFull   = churnRateSeries(d.leave_full,   d.active_full);
+  const cOnline = churnRateSeries(d.leave_online, d.active_online);
+  const cCorp   = churnRateSeries(d.leave_corp,   d.active_corp);
+  const leaveTotal = sumArr(d.leave_full, d.leave_online, d.leave_corp);
+  const cTotal = churnRateSeries(leaveTotal, activeTotal);
+
+  const fmtPct = v => v == null ? '—' : `<span class="${v >= 2 ? 'pct-bad' : 'pct-ok'}">${v.toFixed(2)}%</span>`;
+  const fmtNum = v => v == null ? '—' : v.toLocaleString();
+
+  const rows = [];
+  for (let i = n - 1; i >= start; i--) {
+    const nT = sumArr(d.new_full, d.new_online, d.new_corp)[i];
+    rows.push(`<tr>
+      <td>${fmtDate(d.dates[i], periodicity)}</td>
+      <td>${fmtNum(nT)}</td><td>${fmtNum(d.new_full[i])}</td><td>${fmtNum(d.new_online[i])}</td><td>${fmtNum(d.new_corp[i])}</td>
+      <td>${fmtNum(leaveTotal[i])}</td><td>${fmtNum(d.leave_full[i])}</td><td>${fmtNum(d.leave_online[i])}</td><td>${fmtNum(d.leave_corp[i])}</td>
+      <td>${fmtPct(cTotal[i])}</td><td>${fmtPct(cFull[i])}</td><td>${fmtPct(cOnline[i])}</td><td>${fmtPct(cCorp[i])}</td>
+      <td>${fmtNum(activeTotal[i])}</td>
+    </tr>`);
+  }
+  document.getElementById('detail-table').innerHTML = head + '<tbody>' + rows.join('') + '</tbody>';
+}
+
+function render() {
+  const d = DATA[currentPeriodicity];
+  const labels = d.dates.map(x => fmtDate(x, currentPeriodicity));
+
+  destroyCharts();
+  renderKPIs(d, currentPeriodicity);
+  drawActive(d, labels);
+  drawChurn(d, labels);
+  drawNew(d, labels);
+  drawLeave(d, labels);
+  renderDetailTable(d, currentPeriodicity);
+}
+
+async function main() {
+  const resp = await fetch('./data.json?_=' + Date.now());
+  DATA = await resp.json();
+  document.getElementById('meta').textContent =
+    `データ生成: ${DATA.generated_at.replace('T', ' ')} / ソース: ${DATA.source}`;
+
+  document.getElementById('btn-weekly').addEventListener('click', () => {
+    currentPeriodicity = 'weekly';
+    document.getElementById('btn-weekly').classList.add('active');
+    document.getElementById('btn-monthly').classList.remove('active');
+    render();
+  });
+  document.getElementById('btn-monthly').addEventListener('click', () => {
+    currentPeriodicity = 'monthly';
+    document.getElementById('btn-monthly').classList.add('active');
+    document.getElementById('btn-weekly').classList.remove('active');
+    render();
+  });
+
+  render();
+}
+
+main();
+</script>
+
+</body>
+</html>

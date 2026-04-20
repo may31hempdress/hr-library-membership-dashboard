@@ -1,0 +1,10 @@
+{
+  "name": "hr-library-membership-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "人事図書館 週次/月次 メンバー推移ダッシュボード (Vercel static site)",
+  "scripts": {
+    "build": "python extract.py",
+    "dev": "python -m http.server --directory public 5173"
+  }
+}
