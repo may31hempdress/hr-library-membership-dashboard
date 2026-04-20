@@ -120,7 +120,21 @@
     align-items: baseline;
   }
   .card h2 .hint { font-size: 11px; color: var(--muted); font-weight: 400; }
-  .chart-wrap { position: relative; height: 320px; }
+  .chart-wrap {
+    position: relative;
+    height: 320px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .chart-wrap::-webkit-scrollbar { height: 10px; }
+  .chart-wrap::-webkit-scrollbar-track { background: #f0f0f0; border-radius: 5px; }
+  .chart-wrap::-webkit-scrollbar-thumb { background: var(--brand-soft); border-radius: 5px; }
+  .chart-wrap::-webkit-scrollbar-thumb:hover { background: var(--brand); }
+  .chart-inner {
+    position: relative;
+    height: 100%;
+    min-width: 100%;
+  }
 
   .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; overflow-x: auto; max-height: 420px; overflow-y: auto; margin-top: 24px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
   .table-wrap h2 { font-size: 14px; margin: 0 0 8px; font-weight: 700; color: var(--text); }
@@ -184,19 +198,19 @@
   <section class="charts">
     <div class="card">
       <h2>アクティブメンバー数推移 <span class="hint">フル + オンライン + 法人一括</span></h2>
-      <div class="chart-wrap"><canvas id="chart-active"></canvas></div>
+      <div class="chart-wrap"><div class="chart-inner"><canvas id="chart-active"></canvas></div></div>
     </div>
     <div class="card">
       <h2>退会率 (%) <span class="hint">当期退会 ÷ 期首アクティブ</span></h2>
-      <div class="chart-wrap"><canvas id="chart-churn"></canvas></div>
+      <div class="chart-wrap"><div class="chart-inner"><canvas id="chart-churn"></canvas></div></div>
     </div>
     <div class="card">
       <h2>入会者数 <span class="hint">種別内訳</span></h2>
-      <div class="chart-wrap"><canvas id="chart-new"></canvas></div>
+      <div class="chart-wrap"><div class="chart-inner"><canvas id="chart-new"></canvas></div></div>
     </div>
     <div class="card">
       <h2>退会者数 <span class="hint">種別内訳</span></h2>
-      <div class="chart-wrap"><canvas id="chart-leave"></canvas></div>
+      <div class="chart-wrap"><div class="chart-inner"><canvas id="chart-leave"></canvas></div></div>
     </div>
   </section>
 
@@ -521,6 +535,31 @@ function renderDetailTable(d, periodicity) {
   `;
 }
 
+// 1期間あたりの最小横幅(px)。これより小さくなる場合は横スクロールが出る
+const PX_PER_POINT = { weekly: 32, monthly: 55 };
+
+function setChartWidths(n, periodicity) {
+  const pxPerPoint = PX_PER_POINT[periodicity];
+  const desired = n * pxPerPoint;
+  document.querySelectorAll('.chart-wrap').forEach(wrap => {
+    const inner = wrap.querySelector('.chart-inner');
+    if (!inner) return;
+    const containerWidth = wrap.clientWidth;
+    if (desired > containerWidth) {
+      inner.style.width = desired + 'px';
+    } else {
+      inner.style.width = '100%';
+    }
+  });
+}
+
+function scrollChartsToEnd() {
+  // 最新データ(右端)を初期表示
+  document.querySelectorAll('.chart-wrap').forEach(wrap => {
+    wrap.scrollLeft = wrap.scrollWidth;
+  });
+}
+
 function render() {
   const d = DATA[currentPeriodicity];
   const labels = d.dates.map(x => fmtDate(x, currentPeriodicity));
@@ -528,12 +567,15 @@ function render() {
   const flowMax = currentPeriodicity === 'weekly' ? axisMaxes.flowWeekly : axisMaxes.flowMonthly;
 
   destroyCharts();
+  setChartWidths(d.dates.length, currentPeriodicity);
   renderKPIs(d, currentPeriodicity);
   drawActive(d, labels, axisMaxes);
   drawChurn(d, labels);
   drawNew(d, labels, flowMax);
   drawLeave(d, labels, flowMax);
   renderDetailTable(d, currentPeriodicity);
+  // Chart.js の描画完了を待ってから右端へスクロール
+  requestAnimationFrame(() => requestAnimationFrame(scrollChartsToEnd));
 }
 
 async function main() {
