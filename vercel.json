@@ -1,5 +1,8 @@
 {
   "cleanUrls": true,
+  "buildCommand": "",
+  "installCommand": "",
+  "outputDirectory": "public",
   "headers": [
     {
       "source": "/data.json",
