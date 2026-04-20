@@ -293,6 +293,38 @@ let DATA = null;
 let currentPeriodicity = 'weekly';
 const charts = {}; // { key: { y: Chart, plot: Chart } }
 
+// 棒グラフの上に合計値を描画するカスタムプラグイン
+const totalLabelPlugin = {
+  id: 'totalLabel',
+  afterDatasetsDraw(chart, _args, opts) {
+    if (!opts || !opts.enabled) return;
+    const { ctx, data } = chart;
+    if (!data.datasets.length) return;
+    const lastIdx = data.datasets.length - 1;
+    const lastMeta = chart.getDatasetMeta(lastIdx);
+    if (!lastMeta || !lastMeta.data) return;
+
+    ctx.save();
+    ctx.fillStyle = '#1a1a1a';
+    ctx.font = '600 10px "Noto Sans JP", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    for (let i = 0; i < lastMeta.data.length; i++) {
+      let sum = 0;
+      let anyNonNull = false;
+      for (const ds of data.datasets) {
+        if (ds.data[i] != null) { sum += ds.data[i]; anyNonNull = true; }
+      }
+      if (!anyNonNull || sum === 0) continue;
+      const bar = lastMeta.data[i];
+      if (!bar) continue;
+      ctx.fillText(sum.toLocaleString(), bar.x, bar.y - 3);
+    }
+    ctx.restore();
+  },
+};
+if (typeof Chart !== 'undefined') Chart.register(totalLabelPlugin);
+
 // 一度に表示したい期間数
 const TARGET_VISIBLE = { weekly: 26, monthly: 12 };
 
@@ -372,7 +404,7 @@ function renderCardLegend(containerId, items) {
 }
 
 // Y軸固定+横スクロール版 チャート描画
-function renderStickyChart(key, { chartType, datasets, labels, yMax, yTickCallback, tooltipCallback, stacked = false }) {
+function renderStickyChart(key, { chartType, datasets, labels, yMax, yTickCallback, tooltipCallback, stacked = false, showTotalLabel = false }) {
   const yCanvas = document.getElementById(`chart-${key}-y`);
   const pCanvas = document.getElementById(`chart-${key}`);
   if (!yCanvas || !pCanvas) return;
@@ -401,6 +433,7 @@ function renderStickyChart(key, { chartType, datasets, labels, yMax, yTickCallba
     borderColor: 'transparent',
     pointRadius: 0,
   }));
+  const topPad = showTotalLabel ? 18 : 0;
   charts[key] = charts[key] || {};
   charts[key].y = new Chart(yCanvas, {
     type: chartType,
@@ -410,6 +443,7 @@ function renderStickyChart(key, { chartType, datasets, labels, yMax, yTickCallba
       maintainAspectRatio: false,
       animation: false,
       events: [],
+      layout: { padding: { top: topPad } },
       plugins: {
         legend: { display: false },
         tooltip: { enabled: false },
@@ -445,6 +479,7 @@ function renderStickyChart(key, { chartType, datasets, labels, yMax, yTickCallba
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
+      layout: { padding: { top: topPad } },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -454,6 +489,7 @@ function renderStickyChart(key, { chartType, datasets, labels, yMax, yTickCallba
           padding: 10,
           callbacks: tooltipCallback ? { label: tooltipCallback } : undefined,
         },
+        totalLabel: { enabled: showTotalLabel },
       },
       scales: {
         y: {
@@ -557,6 +593,7 @@ function drawActive(d, labels, axisMaxes) {
     chartType: 'bar',
     labels,
     stacked: true,
+    showTotalLabel: true,
     yMax: axisMaxes.active,
     datasets: [
       { label: LABELS.full,   data: d.active_full,   backgroundColor: COLORS.full,   stack: 'a', borderWidth: 0 },
@@ -596,6 +633,7 @@ function drawNew(d, labels, yMax) {
     chartType: 'bar',
     labels,
     stacked: true,
+    showTotalLabel: true,
     yMax,
     datasets: [
       { label: LABELS.full,   data: d.new_full,   backgroundColor: COLORS.full,   stack: 'a', borderWidth: 0 },
@@ -611,6 +649,7 @@ function drawLeave(d, labels, yMax) {
     chartType: 'bar',
     labels,
     stacked: true,
+    showTotalLabel: true,
     yMax,
     datasets: [
       { label: LABELS.full,   data: d.leave_full,   backgroundColor: COLORS.full,   stack: 'a', borderWidth: 0 },
