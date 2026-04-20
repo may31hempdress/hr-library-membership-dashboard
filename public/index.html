@@ -84,6 +84,15 @@
     gap: 14px;
     margin-bottom: 24px;
   }
+  .kpis.mtg {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  @media (max-width: 900px) {
+    .kpis.mtg { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 600px) {
+    .kpis.mtg { grid-template-columns: 1fr; }
+  }
   .kpi {
     background: var(--card);
     border: 1px solid var(--border);
@@ -505,10 +514,13 @@ function renderStickyChart(key, { chartType, datasets, labels, yMax, yTickCallba
 }
 
 function renderKPIs(d, periodicity) {
+  const kpisEl = document.getElementById('kpis');
   if (periodicity === 'monthly') {
+    kpisEl.classList.add('mtg');
     renderMonthlyMTGKPIs();
     return;
   }
+  kpisEl.classList.remove('mtg');
   const n = d.dates.length;
   const i = n - 1;
   const iPrev = n - 2;
@@ -540,13 +552,23 @@ function renderKPIs(d, periodicity) {
 }
 
 // 月次タブ用: MTG報告フォーマットのKPI
-//   前月 / 今月(現時点) の 入会・退会を表示
-//   サブラインに 先月 と 前年同月 の比較
+//   前月 / 今月(現時点) の 入会・退会・退会率
+//   前月カード: 前々月 と 前年同月 の比較
+//   今月カード: 前年同月 のみ比較 (前月は隣接カードに表示のため省略)
 function renderMonthlyMTGKPIs() {
   const m = DATA.monthly;
   const w = DATA.weekly;
   const sumAt = (ds, i, kind) =>
     i < 0 || i == null ? null : ((ds[`${kind}_full`][i] ?? 0) + (ds[`${kind}_online`][i] ?? 0) + (ds[`${kind}_corp`][i] ?? 0));
+  const activeAt = (ds, i) =>
+    i < 0 || i == null ? null : ((ds.active_full[i] ?? 0) + (ds.active_online[i] ?? 0) + (ds.active_corp[i] ?? 0));
+  const churnAt = (ds, i) => {
+    if (i <= 0 || i == null) return null;
+    const base = activeAt(ds, i - 1);
+    const leave = sumAt(ds, i, 'leave');
+    if (!base || leave == null) return null;
+    return (leave / base) * 100;
+  };
   const findMonthIdx = (y, mo) => m.dates.findIndex(s => {
     const dt = new Date(s);
     return dt.getFullYear() === y && dt.getMonth() === mo;
@@ -558,7 +580,7 @@ function renderMonthlyMTGKPIs() {
   const prevDate = new Date(m.dates[iPrev]);
   const prevY = prevDate.getFullYear();
   const prevMo = prevDate.getMonth();
-  const iPrev2 = iPrev - 1;                                  // 前月から見た先月 (= 前々月)
+  const iPrev2 = iPrev - 1;                                  // 前々月
   const iPrevLY = findMonthIdx(prevY - 1, prevMo);           // 前月の前年同月
 
   // 今月(進行中) = 今日のカレンダー月
@@ -573,28 +595,46 @@ function renderMonthlyMTGKPIs() {
     curLeave += (w.leave_full[i] ?? 0) + (w.leave_online[i] ?? 0) + (w.leave_corp[i] ?? 0);
   }
   const iCurLY = findMonthIdx(curY - 1, curMo);              // 今月の前年同月
+  // 今月退会率 = 今月の累計退会 / 前月末のアクティブ
+  const curBase = activeAt(m, iPrev);
+  const curChurn = curBase > 0 ? (curLeave / curBase) * 100 : null;
 
   const fmtN = v => v == null ? '—' : `${v}名`;
+  const fmtP = v => v == null ? '—' : `${v.toFixed(1)}%`;
+  const note = '<span style="color:#888;font-weight:400">※現時点</span>';
+  const prevLabel = monthLabel(prevY, prevMo);
+  const curLabel = monthLabel(curY, curMo);
+
   const items = [
     {
-      label: `前月 (${monthLabel(prevY, prevMo)}) 入会`,
+      label: `前月 (${prevLabel}) 入会`,
       value: fmtN(sumAt(m, iPrev, 'new')),
-      sub: `先月 ${fmtN(sumAt(m, iPrev2, 'new'))} / 前年同月 ${fmtN(sumAt(m, iPrevLY, 'new'))}`,
+      sub: `前々月 ${fmtN(sumAt(m, iPrev2, 'new'))} / 前年同月 ${fmtN(sumAt(m, iPrevLY, 'new'))}`,
     },
     {
-      label: `前月 (${monthLabel(prevY, prevMo)}) 退会`,
+      label: `前月 (${prevLabel}) 退会`,
       value: fmtN(sumAt(m, iPrev, 'leave')),
-      sub: `先月 ${fmtN(sumAt(m, iPrev2, 'leave'))} / 前年同月 ${fmtN(sumAt(m, iPrevLY, 'leave'))}`,
+      sub: `前々月 ${fmtN(sumAt(m, iPrev2, 'leave'))} / 前年同月 ${fmtN(sumAt(m, iPrevLY, 'leave'))}`,
     },
     {
-      label: `今月 (${monthLabel(curY, curMo)}) 入会 <span style="color:#888;font-weight:400">※現時点</span>`,
+      label: `前月 (${prevLabel}) 退会率`,
+      value: fmtP(churnAt(m, iPrev)),
+      sub: `前々月 ${fmtP(churnAt(m, iPrev2))} / 前年同月 ${fmtP(churnAt(m, iPrevLY))}`,
+    },
+    {
+      label: `今月 (${curLabel}) 入会 ${note}`,
       value: `${curNew}名`,
-      sub: `先月 ${fmtN(sumAt(m, iPrev, 'new'))} / 前年同月 ${fmtN(sumAt(m, iCurLY, 'new'))}`,
+      sub: `前年同月 ${fmtN(sumAt(m, iCurLY, 'new'))}`,
     },
     {
-      label: `今月 (${monthLabel(curY, curMo)}) 退会 <span style="color:#888;font-weight:400">※現時点</span>`,
+      label: `今月 (${curLabel}) 退会 ${note}`,
       value: `${curLeave}名`,
-      sub: `先月 ${fmtN(sumAt(m, iPrev, 'leave'))} / 前年同月 ${fmtN(sumAt(m, iCurLY, 'leave'))}`,
+      sub: `前年同月 ${fmtN(sumAt(m, iCurLY, 'leave'))}`,
+    },
+    {
+      label: `今月 (${curLabel}) 退会率 ${note}`,
+      value: fmtP(curChurn),
+      sub: `前年同月 ${fmtP(churnAt(m, iCurLY))}`,
     },
   ];
   document.getElementById('kpis').innerHTML = items.map(it => `
