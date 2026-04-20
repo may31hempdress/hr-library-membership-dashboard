@@ -505,6 +505,10 @@ function renderStickyChart(key, { chartType, datasets, labels, yMax, yTickCallba
 }
 
 function renderKPIs(d, periodicity) {
+  if (periodicity === 'monthly') {
+    renderMonthlyMTGKPIs();
+    return;
+  }
   const n = d.dates.length;
   const i = n - 1;
   const iPrev = n - 2;
@@ -515,8 +519,8 @@ function renderKPIs(d, periodicity) {
   const activePrev = (d.active_full[iPrev] ?? 0) + (d.active_online[iPrev] ?? 0) + (d.active_corp[iPrev] ?? 0);
   const churn = activePrev > 0 ? (leaveTotal / activePrev) * 100 : null;
   const activeDelta = activeTotal - activePrev;
-  const periodLabel = periodicity === 'weekly' ? '当週' : '当月';
-  const prevLabel = periodicity === 'weekly' ? '週' : '月';
+  const periodLabel = '当週';
+  const prevLabel = '週';
   const endLabel = fmtDate(d.dates[i], periodicity);
 
   const items = [
@@ -531,6 +535,73 @@ function renderKPIs(d, periodicity) {
       <div class="label">${it.label}</div>
       <div class="value">${it.value}</div>
       <div class="sub ${it.deltaClass || ''}">${it.sub}</div>
+    </div>
+  `).join('');
+}
+
+// 月次タブ用: MTG報告フォーマットのKPI
+//   前月 / 今月(現時点) の 入会・退会を表示
+//   サブラインに 先月 と 前年同月 の比較
+function renderMonthlyMTGKPIs() {
+  const m = DATA.monthly;
+  const w = DATA.weekly;
+  const sumAt = (ds, i, kind) =>
+    i < 0 || i == null ? null : ((ds[`${kind}_full`][i] ?? 0) + (ds[`${kind}_online`][i] ?? 0) + (ds[`${kind}_corp`][i] ?? 0));
+  const findMonthIdx = (y, mo) => m.dates.findIndex(s => {
+    const dt = new Date(s);
+    return dt.getFullYear() === y && dt.getMonth() === mo;
+  });
+  const monthLabel = (y, mo) => `${y}/${String(mo + 1).padStart(2, '0')}`;
+
+  // 前月(完結) = 月次データの最終行
+  const iPrev = m.dates.length - 1;
+  const prevDate = new Date(m.dates[iPrev]);
+  const prevY = prevDate.getFullYear();
+  const prevMo = prevDate.getMonth();
+  const iPrev2 = iPrev - 1;                                  // 前月から見た先月 (= 前々月)
+  const iPrevLY = findMonthIdx(prevY - 1, prevMo);           // 前月の前年同月
+
+  // 今月(進行中) = 今日のカレンダー月
+  const today = new Date();
+  const curY = today.getFullYear();
+  const curMo = today.getMonth();
+  const curPrefix = `${curY}-${String(curMo + 1).padStart(2, '0')}-`;
+  let curNew = 0, curLeave = 0;
+  for (let i = 0; i < w.dates.length; i++) {
+    if (!w.dates[i].startsWith(curPrefix)) continue;
+    curNew += (w.new_full[i] ?? 0) + (w.new_online[i] ?? 0) + (w.new_corp[i] ?? 0);
+    curLeave += (w.leave_full[i] ?? 0) + (w.leave_online[i] ?? 0) + (w.leave_corp[i] ?? 0);
+  }
+  const iCurLY = findMonthIdx(curY - 1, curMo);              // 今月の前年同月
+
+  const fmtN = v => v == null ? '—' : `${v}名`;
+  const items = [
+    {
+      label: `前月 (${monthLabel(prevY, prevMo)}) 入会`,
+      value: fmtN(sumAt(m, iPrev, 'new')),
+      sub: `先月 ${fmtN(sumAt(m, iPrev2, 'new'))} / 前年同月 ${fmtN(sumAt(m, iPrevLY, 'new'))}`,
+    },
+    {
+      label: `前月 (${monthLabel(prevY, prevMo)}) 退会`,
+      value: fmtN(sumAt(m, iPrev, 'leave')),
+      sub: `先月 ${fmtN(sumAt(m, iPrev2, 'leave'))} / 前年同月 ${fmtN(sumAt(m, iPrevLY, 'leave'))}`,
+    },
+    {
+      label: `今月 (${monthLabel(curY, curMo)}) 入会 <span style="color:#888;font-weight:400">※現時点</span>`,
+      value: `${curNew}名`,
+      sub: `先月 ${fmtN(sumAt(m, iPrev, 'new'))} / 前年同月 ${fmtN(sumAt(m, iCurLY, 'new'))}`,
+    },
+    {
+      label: `今月 (${monthLabel(curY, curMo)}) 退会 <span style="color:#888;font-weight:400">※現時点</span>`,
+      value: `${curLeave}名`,
+      sub: `先月 ${fmtN(sumAt(m, iPrev, 'leave'))} / 前年同月 ${fmtN(sumAt(m, iCurLY, 'leave'))}`,
+    },
+  ];
+  document.getElementById('kpis').innerHTML = items.map(it => `
+    <div class="kpi">
+      <div class="label">${it.label}</div>
+      <div class="value">${it.value}</div>
+      <div class="sub">${it.sub}</div>
     </div>
   `).join('');
 }
