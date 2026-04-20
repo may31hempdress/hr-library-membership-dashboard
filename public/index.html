@@ -122,21 +122,48 @@
     align-items: baseline;
   }
   .card h2 .hint { font-size: 11px; color: var(--muted); font-weight: 400; }
+
+  .card-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .card-legend .item { display: inline-flex; align-items: center; gap: 5px; }
+  .card-legend .swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+
   .chart-wrap {
     position: relative;
     height: 320px;
+    display: flex;
+    align-items: stretch;
+  }
+  .chart-yaxis {
+    width: 58px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 2;
+    background: var(--card);
+  }
+  .chart-yaxis canvas { display: block; width: 100% !important; height: 100% !important; }
+  .chart-scroll {
+    flex: 1;
     overflow-x: auto;
     overflow-y: hidden;
+    min-width: 0;
   }
-  .chart-wrap::-webkit-scrollbar { height: 10px; }
-  .chart-wrap::-webkit-scrollbar-track { background: #f0f0f0; border-radius: 5px; }
-  .chart-wrap::-webkit-scrollbar-thumb { background: var(--brand-soft); border-radius: 5px; }
-  .chart-wrap::-webkit-scrollbar-thumb:hover { background: var(--brand); }
+  .chart-scroll::-webkit-scrollbar { height: 10px; }
+  .chart-scroll::-webkit-scrollbar-track { background: #f0f0f0; border-radius: 5px; }
+  .chart-scroll::-webkit-scrollbar-thumb { background: var(--brand-soft); border-radius: 5px; }
+  .chart-scroll::-webkit-scrollbar-thumb:hover { background: var(--brand); }
   .chart-inner {
     position: relative;
     height: 100%;
     min-width: 100%;
   }
+  .chart-inner canvas { display: block; }
 
   .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; overflow-x: auto; max-height: 420px; overflow-y: auto; margin-top: 24px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
   .table-wrap h2 { font-size: 14px; margin: 0 0 8px; font-weight: 700; color: var(--text); }
@@ -200,19 +227,35 @@
   <section class="charts">
     <div class="card">
       <h2>アクティブメンバー数推移 <span class="hint">フル + オンライン + 法人一括</span></h2>
-      <div class="chart-wrap"><div class="chart-inner"><canvas id="chart-active"></canvas></div></div>
+      <div class="card-legend" id="legend-active"></div>
+      <div class="chart-wrap">
+        <div class="chart-yaxis"><canvas id="chart-active-y"></canvas></div>
+        <div class="chart-scroll"><div class="chart-inner"><canvas id="chart-active"></canvas></div></div>
+      </div>
     </div>
     <div class="card">
       <h2>退会率 (%) <span class="hint">当期退会 ÷ 期首アクティブ</span></h2>
-      <div class="chart-wrap"><div class="chart-inner"><canvas id="chart-churn"></canvas></div></div>
+      <div class="card-legend" id="legend-churn"></div>
+      <div class="chart-wrap">
+        <div class="chart-yaxis"><canvas id="chart-churn-y"></canvas></div>
+        <div class="chart-scroll"><div class="chart-inner"><canvas id="chart-churn"></canvas></div></div>
+      </div>
     </div>
     <div class="card">
       <h2>入会者数 <span class="hint">種別内訳</span></h2>
-      <div class="chart-wrap"><div class="chart-inner"><canvas id="chart-new"></canvas></div></div>
+      <div class="card-legend" id="legend-new"></div>
+      <div class="chart-wrap">
+        <div class="chart-yaxis"><canvas id="chart-new-y"></canvas></div>
+        <div class="chart-scroll"><div class="chart-inner"><canvas id="chart-new"></canvas></div></div>
+      </div>
     </div>
     <div class="card">
       <h2>退会者数 <span class="hint">種別内訳</span></h2>
-      <div class="chart-wrap"><div class="chart-inner"><canvas id="chart-leave"></canvas></div></div>
+      <div class="card-legend" id="legend-leave"></div>
+      <div class="chart-wrap">
+        <div class="chart-yaxis"><canvas id="chart-leave-y"></canvas></div>
+        <div class="chart-scroll"><div class="chart-inner"><canvas id="chart-leave"></canvas></div></div>
+      </div>
     </div>
   </section>
 
@@ -248,7 +291,10 @@ const CHURN_THRESHOLDS = {
 
 let DATA = null;
 let currentPeriodicity = 'weekly';
-const charts = {};
+const charts = {}; // { key: { y: Chart, plot: Chart } }
+
+// 一度に表示したい期間数
+const TARGET_VISIBLE = { weekly: 26, monthly: 12 };
 
 function fmtDate(iso, periodicity) {
   if (!iso) return '';
@@ -306,8 +352,120 @@ function niceMax(v) {
 
 function destroyCharts() {
   for (const k of Object.keys(charts)) {
-    if (charts[k]) { charts[k].destroy(); delete charts[k]; }
+    const pair = charts[k];
+    if (pair) {
+      if (pair.y) pair.y.destroy();
+      if (pair.plot) pair.plot.destroy();
+    }
+    delete charts[k];
   }
+}
+
+function renderCardLegend(containerId, items) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = items.map(it => `
+    <span class="item">
+      <span class="swatch" style="background:${it.color}"></span>${it.label}
+    </span>
+  `).join('');
+}
+
+// Y軸固定+横スクロール版 チャート描画
+function renderStickyChart(key, { chartType, datasets, labels, yMax, yTickCallback, tooltipCallback, stacked = false }) {
+  const yCanvas = document.getElementById(`chart-${key}-y`);
+  const pCanvas = document.getElementById(`chart-${key}`);
+  if (!yCanvas || !pCanvas) return;
+
+  // スクロールエリアの幅から、1期あたりの px を算出
+  const scrollEl = pCanvas.closest('.chart-scroll');
+  const innerEl = pCanvas.closest('.chart-inner');
+  const visibleW = scrollEl ? scrollEl.clientWidth : 500;
+  const targetVisible = TARGET_VISIBLE[currentPeriodicity];
+  const pxPerPoint = Math.max(16, visibleW / targetVisible);
+  const totalW = Math.max(visibleW, pxPerPoint * labels.length);
+  if (innerEl) innerEl.style.width = totalW + 'px';
+
+  // 共通の x-axis 設定 (両チャートで同じレイアウトに)
+  const xBase = {
+    ticks: { color: '#666', font: { size: 10 }, maxRotation: 0, autoSkip: true, autoSkipPadding: 8 },
+    grid: { color: 'rgba(0,0,0,.04)' },
+    stacked,
+  };
+
+  // Y軸のみチャート (データを透明化、スケールだけ表示)
+  const yOnlyDatasets = datasets.map(ds => ({
+    ...ds,
+    data: [null],
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    pointRadius: 0,
+  }));
+  charts[key] = charts[key] || {};
+  charts[key].y = new Chart(yCanvas, {
+    type: chartType,
+    data: { labels: [''], datasets: yOnlyDatasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      events: [],
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false },
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: yMax,
+          stacked,
+          ticks: {
+            color: '#666',
+            font: { size: 11 },
+            callback: yTickCallback,
+          },
+          grid: { display: false },
+          border: { color: '#d4d4d4' },
+        },
+        x: {
+          ...xBase,
+          ticks: { ...xBase.ticks, callback: () => '' },
+          grid: { display: false },
+          border: { display: false },
+        },
+      },
+    },
+  });
+
+  // プロット側チャート (Y軸非表示、データとX軸のみ)
+  charts[key].plot = new Chart(pCanvas, {
+    type: chartType,
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(26,26,26,0.92)',
+          titleFont: { size: 12 },
+          bodyFont: { size: 11 },
+          padding: 10,
+          callbacks: tooltipCallback ? { label: tooltipCallback } : undefined,
+        },
+      },
+      scales: {
+        y: {
+          display: false,
+          beginAtZero: true,
+          max: yMax,
+          stacked,
+        },
+        x: xBase,
+      },
+    },
+  });
 }
 
 function renderKPIs(d, periodicity) {
@@ -359,30 +517,57 @@ function computeAxisMaxes() {
     return niceMax(peak);
   }
 
+  // 退会率の最大値(期間別、4系列の最大)
+  function churnMax(ds) {
+    const activeTotal = sumArr(ds.active_full, ds.active_online, ds.active_corp);
+    const leaveTotal = sumArr(ds.leave_full, ds.leave_online, ds.leave_corp);
+    const all = [
+      ...churnRateSeries(leaveTotal, activeTotal),
+      ...churnRateSeries(ds.leave_full, ds.active_full),
+      ...churnRateSeries(ds.leave_online, ds.active_online),
+      ...churnRateSeries(ds.leave_corp, ds.active_corp),
+    ].filter(v => v != null);
+    return niceMax(Math.max(...all));
+  }
+
   return {
     active: activeMax,
     flowWeekly: flowMax(w),
     flowMonthly: flowMax(m),
+    churnWeekly: churnMax(w),
+    churnMonthly: churnMax(m),
   };
 }
 
+const STACKED_LEGEND = [
+  { label: LABELS.full,   color: COLORS.full },
+  { label: LABELS.online, color: COLORS.online },
+  { label: LABELS.corp,   color: COLORS.corp },
+];
+const CHURN_LEGEND = [
+  { label: LABELS.total,  color: COLORS.total },
+  { label: LABELS.full,   color: COLORS.full },
+  { label: LABELS.online, color: COLORS.online },
+  { label: LABELS.corp,   color: COLORS.corp },
+];
+
 function drawActive(d, labels, axisMaxes) {
-  const ctx = document.getElementById('chart-active');
-  charts.active = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: LABELS.full,   data: d.active_full,   backgroundColor: COLORS.full,   stack: 'a', borderWidth: 0 },
-        { label: LABELS.online, data: d.active_online, backgroundColor: COLORS.online, stack: 'a', borderWidth: 0 },
-        { label: LABELS.corp,   data: d.active_corp,   backgroundColor: COLORS.corp,   stack: 'a', borderWidth: 0 },
-      ],
-    },
-    options: baseOpts({ stacked: true, yTitle: '人数', yMax: axisMaxes.active }),
+  renderCardLegend('legend-active', STACKED_LEGEND);
+  renderStickyChart('active', {
+    chartType: 'bar',
+    labels,
+    stacked: true,
+    yMax: axisMaxes.active,
+    datasets: [
+      { label: LABELS.full,   data: d.active_full,   backgroundColor: COLORS.full,   stack: 'a', borderWidth: 0 },
+      { label: LABELS.online, data: d.active_online, backgroundColor: COLORS.online, stack: 'a', borderWidth: 0 },
+      { label: LABELS.corp,   data: d.active_corp,   backgroundColor: COLORS.corp,   stack: 'a', borderWidth: 0 },
+    ],
   });
 }
 
-function drawChurn(d, labels) {
+function drawChurn(d, labels, yMax) {
+  renderCardLegend('legend-churn', CHURN_LEGEND);
   const activeTotal = sumArr(d.active_full, d.active_online, d.active_corp);
   const churnFull   = churnRateSeries(d.leave_full,   d.active_full);
   const churnOnline = churnRateSeries(d.leave_online, d.active_online);
@@ -390,93 +575,49 @@ function drawChurn(d, labels) {
   const leaveTotal  = sumArr(d.leave_full, d.leave_online, d.leave_corp);
   const churnTotal  = churnRateSeries(leaveTotal, activeTotal);
 
-  const ctx = document.getElementById('chart-churn');
-  charts.churn = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label: LABELS.total,  data: churnTotal,  borderColor: COLORS.total,  backgroundColor: 'rgba(124,45,18,.1)',  borderWidth: 2.5, tension: .25, pointRadius: 3, fill: false },
-        { label: LABELS.full,   data: churnFull,   borderColor: COLORS.full,   backgroundColor: COLORS.full,   borderWidth: 1.5, tension: .25, pointRadius: 2, fill: false },
-        { label: LABELS.online, data: churnOnline, borderColor: COLORS.online, backgroundColor: COLORS.online, borderWidth: 1.5, tension: .25, pointRadius: 2, fill: false },
-        { label: LABELS.corp,   data: churnCorp,   borderColor: COLORS.corp,   backgroundColor: COLORS.corp,   borderWidth: 1.5, tension: .25, pointRadius: 2, fill: false },
-      ],
-    },
-    options: baseOpts({
-      yTitle: '%',
-      yTickCallback: v => v.toFixed(1) + '%',
-      tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y == null ? '—' : ctx.parsed.y.toFixed(1) + '%'}`,
-    }),
+  renderStickyChart('churn', {
+    chartType: 'line',
+    labels,
+    yMax,
+    yTickCallback: v => v.toFixed(1) + '%',
+    tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y == null ? '—' : ctx.parsed.y.toFixed(1) + '%'}`,
+    datasets: [
+      { label: LABELS.total,  data: churnTotal,  borderColor: COLORS.total,  backgroundColor: 'rgba(124,45,18,.1)',  borderWidth: 2.5, tension: .25, pointRadius: 3, fill: false },
+      { label: LABELS.full,   data: churnFull,   borderColor: COLORS.full,   backgroundColor: COLORS.full,   borderWidth: 1.5, tension: .25, pointRadius: 2, fill: false },
+      { label: LABELS.online, data: churnOnline, borderColor: COLORS.online, backgroundColor: COLORS.online, borderWidth: 1.5, tension: .25, pointRadius: 2, fill: false },
+      { label: LABELS.corp,   data: churnCorp,   borderColor: COLORS.corp,   backgroundColor: COLORS.corp,   borderWidth: 1.5, tension: .25, pointRadius: 2, fill: false },
+    ],
   });
 }
 
 function drawNew(d, labels, yMax) {
-  const ctx = document.getElementById('chart-new');
-  charts.newc = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: LABELS.full,   data: d.new_full,   backgroundColor: COLORS.full,   stack: 'a', borderWidth: 0 },
-        { label: LABELS.online, data: d.new_online, backgroundColor: COLORS.online, stack: 'a', borderWidth: 0 },
-        { label: LABELS.corp,   data: d.new_corp,   backgroundColor: COLORS.corp,   stack: 'a', borderWidth: 0 },
-      ],
-    },
-    options: baseOpts({ stacked: true, yTitle: '人数', yMax }),
+  renderCardLegend('legend-new', STACKED_LEGEND);
+  renderStickyChart('new', {
+    chartType: 'bar',
+    labels,
+    stacked: true,
+    yMax,
+    datasets: [
+      { label: LABELS.full,   data: d.new_full,   backgroundColor: COLORS.full,   stack: 'a', borderWidth: 0 },
+      { label: LABELS.online, data: d.new_online, backgroundColor: COLORS.online, stack: 'a', borderWidth: 0 },
+      { label: LABELS.corp,   data: d.new_corp,   backgroundColor: COLORS.corp,   stack: 'a', borderWidth: 0 },
+    ],
   });
 }
 
 function drawLeave(d, labels, yMax) {
-  const ctx = document.getElementById('chart-leave');
-  charts.leave = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: LABELS.full,   data: d.leave_full,   backgroundColor: COLORS.full,   stack: 'a', borderWidth: 0 },
-        { label: LABELS.online, data: d.leave_online, backgroundColor: COLORS.online, stack: 'a', borderWidth: 0 },
-        { label: LABELS.corp,   data: d.leave_corp,   backgroundColor: COLORS.corp,   stack: 'a', borderWidth: 0 },
-      ],
-    },
-    options: baseOpts({ stacked: true, yTitle: '人数', yMax }),
+  renderCardLegend('legend-leave', STACKED_LEGEND);
+  renderStickyChart('leave', {
+    chartType: 'bar',
+    labels,
+    stacked: true,
+    yMax,
+    datasets: [
+      { label: LABELS.full,   data: d.leave_full,   backgroundColor: COLORS.full,   stack: 'a', borderWidth: 0 },
+      { label: LABELS.online, data: d.leave_online, backgroundColor: COLORS.online, stack: 'a', borderWidth: 0 },
+      { label: LABELS.corp,   data: d.leave_corp,   backgroundColor: COLORS.corp,   stack: 'a', borderWidth: 0 },
+    ],
   });
-}
-
-function baseOpts({ stacked = false, yTitle = '', yTickCallback, tooltipCallback, yMax } = {}) {
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: 'index', intersect: false },
-    plugins: {
-      legend: { labels: { color: '#2d2d2d', boxWidth: 14, font: { size: 11, weight: 500 } } },
-      tooltip: {
-        backgroundColor: 'rgba(26,26,26,0.92)',
-        titleFont: { size: 12 },
-        bodyFont: { size: 11 },
-        padding: 10,
-        callbacks: tooltipCallback ? { label: tooltipCallback } : undefined,
-      },
-    },
-    scales: {
-      x: {
-        stacked,
-        ticks: { color: '#666', maxRotation: 0, autoSkip: true, autoSkipPadding: 10, font: { size: 10 } },
-        grid: { color: 'rgba(0,0,0,.04)' },
-      },
-      y: {
-        stacked,
-        beginAtZero: true,
-        max: yMax,
-        title: yTitle ? { display: true, text: yTitle, color: '#666', font: { size: 11 } } : undefined,
-        ticks: {
-          color: '#666',
-          callback: yTickCallback,
-          font: { size: 11 },
-        },
-        grid: { color: 'rgba(0,0,0,.05)' },
-      },
-    },
-  };
 }
 
 function renderDetailTable(d, periodicity) {
@@ -537,28 +678,21 @@ function renderDetailTable(d, periodicity) {
   `;
 }
 
-// 1期間あたりの最小横幅(px)。これより小さくなる場合は横スクロールが出る
-const PX_PER_POINT = { weekly: 32, monthly: 55 };
-
-function setChartWidths(n, periodicity) {
-  const pxPerPoint = PX_PER_POINT[periodicity];
-  const desired = n * pxPerPoint;
-  document.querySelectorAll('.chart-wrap').forEach(wrap => {
-    const inner = wrap.querySelector('.chart-inner');
-    if (!inner) return;
-    const containerWidth = wrap.clientWidth;
-    if (desired > containerWidth) {
-      inner.style.width = desired + 'px';
-    } else {
-      inner.style.width = '100%';
-    }
+function scrollChartsToEnd() {
+  // 最新データ(右端)を初期表示
+  document.querySelectorAll('.chart-scroll').forEach(el => {
+    el.scrollLeft = el.scrollWidth;
   });
 }
 
-function scrollChartsToEnd() {
-  // 最新データ(右端)を初期表示
-  document.querySelectorAll('.chart-wrap').forEach(wrap => {
-    wrap.scrollLeft = wrap.scrollWidth;
+function scheduleScrollToEnd() {
+  // Chart.js の ResizeObserver / レイアウト確定が遅れるので複数タイミングで試行
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      scrollChartsToEnd();
+      setTimeout(scrollChartsToEnd, 50);
+      setTimeout(scrollChartsToEnd, 200);
+    });
   });
 }
 
@@ -567,17 +701,16 @@ function render() {
   const labels = d.dates.map(x => fmtDate(x, currentPeriodicity));
   const axisMaxes = computeAxisMaxes();
   const flowMax = currentPeriodicity === 'weekly' ? axisMaxes.flowWeekly : axisMaxes.flowMonthly;
+  const churnMax = currentPeriodicity === 'weekly' ? axisMaxes.churnWeekly : axisMaxes.churnMonthly;
 
   destroyCharts();
-  setChartWidths(d.dates.length, currentPeriodicity);
   renderKPIs(d, currentPeriodicity);
   drawActive(d, labels, axisMaxes);
-  drawChurn(d, labels);
+  drawChurn(d, labels, churnMax);
   drawNew(d, labels, flowMax);
   drawLeave(d, labels, flowMax);
   renderDetailTable(d, currentPeriodicity);
-  // Chart.js の描画完了を待ってから右端へスクロール
-  requestAnimationFrame(() => requestAnimationFrame(scrollChartsToEnd));
+  scheduleScrollToEnd();
 }
 
 async function main() {
