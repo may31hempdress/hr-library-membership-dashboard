@@ -161,6 +161,8 @@
   table.table thead th { position: sticky; top: 0; background: var(--card); color: var(--muted); font-weight: 600; border-bottom: 2px solid var(--border-strong); }
   .pct-bad { color: var(--bad); font-weight: 600; }
   .pct-ok { color: var(--good); font-weight: 600; }
+  .pct-neutral { color: var(--text-2); }
+  .legend .chip.neutral { background: #f0f0f0; color: var(--text-2); }
 </style>
 </head>
 <body>
@@ -214,10 +216,18 @@ const COLORS = {
 };
 const LABELS = { full: 'フル', online: 'オンライン', corp: '法人一括', total: '合計' };
 
-// 退会率の「良い/悪い」閾値 — 週次と月次で異なる
+// 退会率の色分け閾値
+// 月次: ≥4% 赤 / <3% 緑 / それ以外 黒
+// 週次: 月次閾値を週次相当に換算 (月を 30.44日 = 4.35週として複利換算)
+//   bad  = 1 - (1 - 0.04)^(1/4.35) ≈ 0.94%
+//   good = 1 - (1 - 0.03)^(1/4.35) ≈ 0.70%
+function monthlyToWeeklyRate(monthlyPct) {
+  const m = monthlyPct / 100;
+  return (1 - Math.pow(1 - m, 1 / 4.35)) * 100;
+}
 const CHURN_THRESHOLDS = {
-  weekly:  1.0, // 1% 以上で赤
-  monthly: 4.0, // 4% 以上で赤
+  monthly: { bad: 4.0, good: 3.0 },
+  weekly:  { bad: monthlyToWeeklyRate(4.0), good: monthlyToWeeklyRate(3.0) },
 };
 
 let DATA = null;
@@ -456,7 +466,7 @@ function baseOpts({ stacked = false, yTitle = '', yTickCallback, tooltipCallback
 function renderDetailTable(d, periodicity) {
   const n = d.dates.length;
   const start = Math.max(0, n - 10);
-  const threshold = CHURN_THRESHOLDS[periodicity];
+  const th = CHURN_THRESHOLDS[periodicity];
 
   const head = `
     <thead>
@@ -476,7 +486,13 @@ function renderDetailTable(d, periodicity) {
   const leaveTotal = sumArr(d.leave_full, d.leave_online, d.leave_corp);
   const cTotal = churnRateSeries(leaveTotal, activeTotal);
 
-  const fmtPct = v => v == null ? '—' : `<span class="${v >= threshold ? 'pct-bad' : 'pct-ok'}">${v.toFixed(1)}%</span>`;
+  const classifyPct = v => {
+    if (v == null) return null;
+    if (v >= th.bad) return 'pct-bad';
+    if (v < th.good) return 'pct-ok';
+    return 'pct-neutral';
+  };
+  const fmtPct = v => v == null ? '—' : `<span class="${classifyPct(v)}">${v.toFixed(1)}%</span>`;
   const fmtNum = v => v == null ? '—' : v.toLocaleString();
 
   const rows = [];
@@ -493,11 +509,15 @@ function renderDetailTable(d, periodicity) {
   document.getElementById('detail-table').innerHTML = head + '<tbody>' + rows.join('') + '</tbody>';
 
   // テーブル上部の色凡例
+  const periodNote = periodicity === 'weekly'
+    ? '(週次 — 月次基準を複利換算)'
+    : '(月次基準)';
   document.getElementById('table-legend').innerHTML = `
     <span class="note">退会率の色:</span>
-    <span class="chip good">緑 &lt; ${threshold.toFixed(1)}%</span>
-    <span class="chip bad">赤 ≥ ${threshold.toFixed(1)}%</span>
-    <span class="note">(${periodicity === 'weekly' ? '週次' : '月次'}基準)</span>
+    <span class="chip good">緑 &lt; ${th.good.toFixed(1)}%</span>
+    <span class="chip neutral">黒 ${th.good.toFixed(1)}–${th.bad.toFixed(1)}%</span>
+    <span class="chip bad">赤 ≥ ${th.bad.toFixed(1)}%</span>
+    <span class="note">${periodNote}</span>
   `;
 }
 
