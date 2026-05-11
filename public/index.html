@@ -85,18 +85,18 @@
     margin-bottom: 24px;
   }
   .kpis.mtg {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px;
   }
   .kpis.mtg .kpi { padding: 12px 14px; }
   .kpis.mtg .kpi .label { font-size: 10px; }
   .kpis.mtg .kpi .value { font-size: 22px; }
   .kpis.mtg .kpi .sub { font-size: 10px; }
-  @media (max-width: 1200px) {
-    .kpis.mtg { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  }
-  @media (max-width: 700px) {
+  @media (max-width: 1100px) {
     .kpis.mtg { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 600px) {
+    .kpis.mtg { grid-template-columns: 1fr; }
   }
   .kpi {
     background: var(--card);
@@ -606,6 +606,18 @@ function renderMonthlyMTGKPIs() {
 
   const fmtN = v => v == null ? '—' : `${v}名`;
   const fmtP = v => v == null ? '—' : `${v.toFixed(1)}%`;
+  const fmtNet = v => {
+    if (v == null) return '—';
+    const sign = v > 0 ? '+' : '';
+    return `${sign}${v}名`;
+  };
+  // 純増 = 入会 - 退会
+  const netAt = (ds, i) => {
+    const nv = sumAt(ds, i, 'new');
+    const lv = sumAt(ds, i, 'leave');
+    if (nv == null || lv == null) return null;
+    return nv - lv;
+  };
   const note = '<span style="color:#888;font-weight:400">※現時点</span>';
   const prevLabel = monthLabel(prevY, prevMo);
   const curLabel = monthLabel(curY, curMo);
@@ -627,6 +639,11 @@ function renderMonthlyMTGKPIs() {
       sub: `前々月 ${fmtP(churnAt(m, iPrev2))} / 前年同月 ${fmtP(churnAt(m, iPrevLY))}`,
     },
     {
+      label: `前月 (${prevLabel}) 純増`,
+      value: fmtNet(netAt(m, iPrev)),
+      sub: `前々月 ${fmtNet(netAt(m, iPrev2))} / 前年同月 ${fmtNet(netAt(m, iPrevLY))}`,
+    },
+    {
       label: `今月 (${curLabel}) 入会 ${note}`,
       value: `${curNew}名`,
       sub: `前年同月 ${fmtN(sumAt(m, iCurLY, 'new'))}`,
@@ -640,6 +657,11 @@ function renderMonthlyMTGKPIs() {
       label: `今月 (${curLabel}) 退会率 ${note}`,
       value: fmtP(curChurn),
       sub: `前年同月 ${fmtP(churnAt(m, iCurLY))}`,
+    },
+    {
+      label: `今月 (${curLabel}) 純増 ${note}`,
+      value: fmtNet(curNew - curLeave),
+      sub: `前年同月 ${fmtNet(netAt(m, iCurLY))}`,
     },
   ];
   document.getElementById('kpis').innerHTML = items.map(it => `
