@@ -74,13 +74,14 @@ def extract_sheet(ws, periodicity):
     if date_row_idx is None:
         raise RuntimeError(f"date row not found in {periodicity}")
 
-    # Determine column range for dates
+    # Determine column range for dates (今日以前の日付列のみ採用 — 未来日は除外)
     date_row = next(
         ws.iter_rows(min_row=date_row_idx, max_row=date_row_idx, values_only=True)
     )
+    today = date.today()
     last_col = 0
     for i, c in enumerate(date_row):
-        if isinstance(c, datetime):
+        if isinstance(c, datetime) and c.date() <= today:
             last_col = i
     dates = extract_dates(ws, date_row_idx, 1, last_col)
 
