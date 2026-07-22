@@ -11,9 +11,21 @@
 
 ## 週次更新フロー
 
-1. 最新の `数字で見る人事図書館変遷_*.xlsx` を `../参考資料/` に置く
-2. `python extract.py` を実行 → `public/data.json` が更新される
-3. `vercel --prod` で再デプロイ
+### 自動(毎週月曜 21:00 JST)
+
+GitHub Actions (`.github/workflows/weekly-update.yml`) がサービスアカウント経由で
+Google スプレッドシート(週次グラフ用 / 月次グラフ用シート)から直接データを取得し、
+`public/data.json` を更新して自動 push する。push されると Vercel の Git 連携で
+本番に自動反映される。
+
+初回セットアップは [SETUP_AUTO_UPDATE.md](./SETUP_AUTO_UPDATE.md) を参照。
+
+### 手動更新(スポット反映したい時)
+
+1. 対象の Google スプレッドシートを Google Drive から xlsx としてダウンロード
+   (または `数字で見る人事図書館変遷_*.xlsx` を直接用意)
+2. `python extract.py <xlsxファイルパス>` を実行 → `public/data.json` が更新される
+3. `git add public/data.json && git commit && git push`(Vercel が自動デプロイ)
 
 ## 退会率の定義
 
